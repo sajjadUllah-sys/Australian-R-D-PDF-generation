@@ -35,7 +35,12 @@ import json
 import io
 import tempfile
 import uuid
+import textwrap
 from datetime import datetime
+
+# Load .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 import openai
 import numpy as np
@@ -450,12 +455,17 @@ def make_quarterly_scores(quarterly: list) -> Image:
     """Bar chart of quarterly ATO eligibility scores."""
     quarters = [q["quarter"] for q in quarterly]
     scores   = [q.get("eligibility_score", 0) for q in quarterly]
-    fig, ax  = plt.subplots(figsize=(6.5, 4))
+    # Wrap long activity names so they don't overlap on the x-axis
+    wrapped_labels = [textwrap.fill(q, width=18) for q in quarters]
+    x_pos = range(len(quarters))
+    fig, ax  = plt.subplots(figsize=(7, 4.5))
     fig.patch.set_facecolor(WHITE)
     ax.set_facecolor(LIGHT_GREY)
     bar_colors = [TEAL if s >= 7 else (ORANGE if s >= 5 else "#E74C3C") for s in scores]
-    bars = ax.bar(quarters, scores, color=bar_colors, width=0.45,
+    bars = ax.bar(x_pos, scores, color=bar_colors, width=0.45,
                   edgecolor="white", linewidth=1.5)
+    ax.set_xticks(list(x_pos))
+    ax.set_xticklabels(wrapped_labels, fontsize=6.5, ha="center")
     ax.set_ylim(0, 10.5)
     ax.set_ylabel("Score / 10", fontsize=8, color=NAVY)
     ax.set_title("Quarterly ATO Eligibility Scores", fontsize=10,
@@ -470,7 +480,7 @@ def make_quarterly_scores(quarterly: list) -> Image:
                 ha="center", va="bottom", fontsize=9,
                 fontweight="bold", color=NAVY)
     fig.tight_layout()
-    return _fig_to_image(fig, width_mm=90, height_mm=72)
+    return _fig_to_image(fig, width_mm=100, height_mm=80)
 
 
 def make_progress_bars(challenges: list) -> Image:
@@ -621,7 +631,7 @@ def build_pdf(data: dict, output_path: str) -> str:
 
     side_by_side = Table(
         [[make_expenditure_pie(exp), make_quarterly_scores(data.get("quarterly_summary", []))]],
-        colWidths=[84*mm, 93*mm]
+        colWidths=[80*mm, 102*mm]
     )
     side_by_side.setStyle(TableStyle([
         ("VALIGN",       (0,0),(-1,-1), "TOP"),
@@ -631,23 +641,25 @@ def build_pdf(data: dict, output_path: str) -> str:
     story.append(side_by_side)
     story.append(Spacer(1, 3*mm))
 
-    # Financial summary table
+    # Financial summary table — all cells wrapped in Paragraph for proper text flow
+    def _fp(txt, bold=False):
+        t = f"<b>{txt}</b>" if bold else str(txt)
+        return Paragraph(t, S(f"fp{txt[:8]}", fontSize=8,
+                               textColor=colors.HexColor("#2C3E50"), leading=12))
+
     fin_rows = [
-        ["Expenditure Category",          "Amount (AUD)",            "% of Total"],
-        ["Staff Costs",                    f"${exp.get('staff_costs',0):,.0f}",
-         f"{exp.get('staff_costs',0)/max(total,1)*100:.0f}%"],
-        ["Contractor Costs",               f"${exp.get('contractor_costs',0):,.0f}",
-         f"{exp.get('contractor_costs',0)/max(total,1)*100:.0f}%"],
-        ["Materials & Consumables",        f"${exp.get('materials_consumables',0):,.0f}",
-         f"{exp.get('materials_consumables',0)/max(total,1)*100:.0f}%"],
-        ["Equipment & Depreciation",       f"${exp.get('equipment_depreciation',0):,.0f}",
-         f"{exp.get('equipment_depreciation',0)/max(total,1)*100:.0f}%"],
-        ["Other Eligible Costs",           f"${exp.get('other_eligible_costs',0):,.0f}",
-         f"{exp.get('other_eligible_costs',0)/max(total,1)*100:.0f}%"],
-        ["TOTAL R&D EXPENDITURE",          f"${total:,.0f}",          "100%"],
-        ["Estimated Tax Offset (43.5%)",   f"${offset:,.0f}",         "—"],
+        [Paragraph("<b>Expenditure Category</b>", S("fh1", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold")),
+         Paragraph("<b>Amount (AUD)</b>",          S("fh2", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold", alignment=TA_RIGHT)),
+         Paragraph("<b>% of Total</b>",            S("fh3", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold", alignment=TA_RIGHT))],
+        [_fp("Staff Costs"),           _fp(f"${exp.get('staff_costs',0):,.0f}"),           _fp(f"{exp.get('staff_costs',0)/max(total,1)*100:.0f}%")],
+        [_fp("Contractor Costs"),      _fp(f"${exp.get('contractor_costs',0):,.0f}"),      _fp(f"{exp.get('contractor_costs',0)/max(total,1)*100:.0f}%")],
+        [_fp("Materials & Consumables"),_fp(f"${exp.get('materials_consumables',0):,.0f}"),_fp(f"{exp.get('materials_consumables',0)/max(total,1)*100:.0f}%")],
+        [_fp("Equipment & Depreciation"),_fp(f"${exp.get('equipment_depreciation',0):,.0f}"),_fp(f"{exp.get('equipment_depreciation',0)/max(total,1)*100:.0f}%")],
+        [_fp("Other Eligible Costs"),  _fp(f"${exp.get('other_eligible_costs',0):,.0f}"),  _fp(f"{exp.get('other_eligible_costs',0)/max(total,1)*100:.0f}%")],
+        [_fp("TOTAL R&D EXPENDITURE", bold=True), _fp(f"${total:,.0f}", bold=True),        _fp("100%", bold=True)],
+        [_fp("Estimated Tax Offset (43.5%)", bold=True), _fp(f"${offset:,.0f}", bold=True),_fp("—")],
     ]
-    ft = Table(fin_rows, colWidths=[95*mm, 52*mm, 30*mm])
+    ft = Table(fin_rows, colWidths=[100*mm, 52*mm, 30*mm])
     ft.setStyle(TableStyle([
         ("BACKGROUND",     (0,0), (-1,0),  RL_NAVY),
         ("TEXTCOLOR",      (0,0), (-1,0),  colors.white),
@@ -674,36 +686,37 @@ def build_pdf(data: dict, output_path: str) -> str:
         c_or_s= q.get("core_or_supporting", "Core")
         sc    = TEAL if score >= 7 else (ORANGE if score >= 5 else "#E74C3C")
 
-        # Quarter header row
+        # Quarter header row — total width = 182mm (A4 180mm usable)
         qhdr = Table([[
             Paragraph(f"<b>{qtr} — {c_or_s} R&D Activity</b>",
-                      S(f"qh{qtr}", fontSize=10, textColor=colors.white,
-                        fontName="Helvetica-Bold")),
+                      S(f"qh{qtr}", fontSize=9.5, textColor=colors.white,
+                        fontName="Helvetica-Bold", leading=13)),
             Paragraph(f"Eligibility Score: <b>{score}/10</b>",
                       S(f"qs{qtr}", fontSize=9, textColor=colors.white,
                         alignment=TA_RIGHT))
-        ]], colWidths=[120*mm, 57*mm])
+        ]], colWidths=[130*mm, 52*mm])
         qhdr.setStyle(TableStyle([
             ("BACKGROUND",    (0,0),(-1,-1), RL_BLUE),
-            ("TOPPADDING",    (0,0),(-1,-1), 5),
-            ("BOTTOMPADDING", (0,0),(-1,-1), 5),
+            ("TOPPADDING",    (0,0),(-1,-1), 6),
+            ("BOTTOMPADDING", (0,0),(-1,-1), 6),
             ("LEFTPADDING",   (0,0),(0,0),   8),
             ("RIGHTPADDING",  (-1,0),(-1,0), 8),
+            ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
         ]))
         story.append(qhdr)
 
         q_body = [
-            ["R&D Activities",     q.get("activities_summary", "—")],
-            ["Hypothesis Tested",  q.get("hypothesis",         "—")],
-            ["Uncertainty",        q.get("uncertainty",        "—")],
-            ["Systematic Method",  q.get("systematic_method",  "—")],
-            ["Key Outcome",        q.get("key_outcome",        "—")],
-            ["New Knowledge",      q.get("new_knowledge",      "—")],
+            ["R&D Activities",     Paragraph(q.get("activities_summary", "—"), SMALL)],
+            ["Hypothesis Tested",  Paragraph(q.get("hypothesis",         "—"), SMALL)],
+            ["Uncertainty",        Paragraph(q.get("uncertainty",        "—"), SMALL)],
+            ["Systematic Method",  Paragraph(q.get("systematic_method",  "—"), SMALL)],
+            ["Key Outcome",        Paragraph(q.get("key_outcome",        "—"), SMALL)],
+            ["New Knowledge",      Paragraph(q.get("new_knowledge",      "—"), SMALL)],
         ]
         if q.get("compliance_notes"):
-            q_body.append(["ATO Notes", q["compliance_notes"]])
+            q_body.append(["ATO Notes", Paragraph(q["compliance_notes"], SMALL)])
 
-        qt = Table(q_body, colWidths=[40*mm, 137*mm])
+        qt = Table(q_body, colWidths=[40*mm, 142*mm])
         qt.setStyle(TableStyle([
             ("FONTNAME",       (0,0),(0,-1), "Helvetica-Bold"),
             ("FONTSIZE",       (0,0),(-1,-1), 8),
@@ -713,9 +726,10 @@ def build_pdf(data: dict, output_path: str) -> str:
             ("TOPPADDING",     (0,0),(-1,-1), 5),
             ("BOTTOMPADDING",  (0,0),(-1,-1), 5),
             ("LEFTPADDING",    (0,0),(-1,-1), 8),
+            ("RIGHTPADDING",   (0,0),(-1,-1), 6),
             ("VALIGN",         (0,0),(-1,-1), "TOP"),
         ]))
-        story += [qt, Spacer(1, 3*mm)]
+        story += [qt, Spacer(1, 4*mm)]
 
     # ── TECHNICAL PROGRESS ────────────────────────────────────────────────────
     story.append(PageBreak())
@@ -725,7 +739,12 @@ def build_pdf(data: dict, output_path: str) -> str:
         story.append(make_progress_bars(challenges))
         story.append(Spacer(1, 3*mm))
 
-        prog_rows = [["Challenge", "Progress", "Resolved Items", "Pending Items"]]
+        prog_rows = [
+            [Paragraph("<b>Challenge</b>",     S("ph1", fontSize=7.5, textColor=colors.white, fontName="Helvetica-Bold")),
+             Paragraph("<b>Progress</b>",      S("ph2", fontSize=7.5, textColor=colors.white, fontName="Helvetica-Bold")),
+             Paragraph("<b>Resolved Items</b>",S("ph3", fontSize=7.5, textColor=colors.white, fontName="Helvetica-Bold")),
+             Paragraph("<b>Pending Items</b>", S("ph4", fontSize=7.5, textColor=colors.white, fontName="Helvetica-Bold"))]
+        ]
         for ch in challenges:
             prog_rows.append([
                 Paragraph(f"<b>{ch['challenge']}</b>", SMALL),
@@ -733,7 +752,7 @@ def build_pdf(data: dict, output_path: str) -> str:
                 Paragraph("<br/>".join(ch.get("resolved_items", [])), SMALL),
                 Paragraph("<br/>".join(ch.get("pending_items",  [])), SMALL),
             ])
-        pt = Table(prog_rows, colWidths=[45*mm, 18*mm, 57*mm, 57*mm])
+        pt = Table(prog_rows, colWidths=[48*mm, 16*mm, 60*mm, 58*mm])
         pt.setStyle(TableStyle([
             ("BACKGROUND",     (0,0),(-1,0),  RL_NAVY),
             ("TEXTCOLOR",      (0,0),(-1,0),  colors.white),
@@ -760,14 +779,18 @@ def build_pdf(data: dict, output_path: str) -> str:
     story.append(Paragraph("Key Innovations & New Knowledge Generated", H2))
     innovations = data.get("innovations", [])
     if innovations:
-        innov_rows = [["Category", "Innovation / Knowledge Generated", "Impact"]]
+        innov_rows = [
+            [Paragraph("Category", S("ih1", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold")),
+             Paragraph("Innovation / Knowledge Generated", S("ih2", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold")),
+             Paragraph("Impact", S("ih3", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold"))]
+        ]
         for iv in innovations:
             innov_rows.append([
                 Paragraph(f"<b>{iv.get('category','—')}</b>", SMALL),
                 Paragraph(iv.get("finding", "—"), SMALL),
                 Paragraph(f"<b>{iv.get('impact','—')}</b>", SMALL),
             ])
-        it = Table(innov_rows, colWidths=[42*mm, 118*mm, 17*mm])
+        it = Table(innov_rows, colWidths=[40*mm, 128*mm, 14*mm])
         it.setStyle(TableStyle([
             ("BACKGROUND",     (0,0),(-1,0),  RL_NAVY),
             ("TEXTCOLOR",      (0,0),(-1,0),  colors.white),
@@ -817,16 +840,20 @@ def build_pdf(data: dict, output_path: str) -> str:
         ("Genuine Uncertainty Test", ato.get("meets_uncertainty",   False)),
         ("Systematic Progression",  ato.get("meets_systematic",    False)),
     ]
-    test_rows = [["ATO Eligibility Test", "Status"]]
+    test_rows = [
+        [Paragraph("<b>ATO Eligibility Test</b>", S("th1", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold")),
+         Paragraph("<b>Status</b>",               S("th2", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold"))]
+    ]
     for test_name, passed in tests:
         test_rows.append([
-            test_name,
+            Paragraph(test_name, S(f"tn{test_name[:6]}", fontSize=8,
+                                   textColor=colors.HexColor("#2C3E50"), leading=12)),
             Paragraph("<b>✓ Met</b>" if passed else "<b>✗ Not Met</b>",
-                      S(f"ts{test_name}", fontSize=8,
+                      S(f"ts{test_name[:6]}", fontSize=8,
                         textColor=colors.HexColor(TEAL if passed else "#E74C3C"),
-                        fontName="Helvetica-Bold"))
+                        fontName="Helvetica-Bold", alignment=TA_CENTER))
         ])
-    tt = Table(test_rows, colWidths=[140*mm, 37*mm])
+    tt = Table(test_rows, colWidths=[148*mm, 34*mm])
     tt.setStyle(TableStyle([
         ("BACKGROUND",     (0,0),(-1,0),  RL_BLUE),
         ("TEXTCOLOR",      (0,0),(-1,0),  colors.white),
@@ -861,15 +888,20 @@ def build_pdf(data: dict, output_path: str) -> str:
     story.append(Paragraph("Action Items & Next Steps", H2))
     recs = data.get("recommendations", [])
     if recs:
-        rec_rows = [["Priority", "Recommended Action"]]
+        rec_rows = [
+            [Paragraph("<b>Priority</b>",           S("rh1", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold")),
+             Paragraph("<b>Recommended Action</b>", S("rh2", fontSize=8, textColor=colors.white, fontName="Helvetica-Bold"))]
+        ]
         for rec in recs:
             prio = rec.get("priority", "Medium")
             pc   = "#E74C3C" if prio=="High" else (ORANGE if prio=="Medium" else TEAL)
             rec_rows.append([
-                Paragraph(f'<font color="{pc}"><b>{prio}</b></font>', SMALL),
-                Paragraph(rec.get("action", "—"), SMALL),
+                Paragraph(f'<font color="{pc}"><b>{prio}</b></font>',
+                          S(f"rp{prio}", fontSize=8, leading=12, alignment=TA_CENTER)),
+                Paragraph(rec.get("action", "—"),
+                          S(f"ra{prio}", fontSize=8, textColor=colors.HexColor("#2C3E50"), leading=12)),
             ])
-        rt = Table(rec_rows, colWidths=[22*mm, 155*mm])
+        rt = Table(rec_rows, colWidths=[22*mm, 160*mm])
         rt.setStyle(TableStyle([
             ("BACKGROUND",     (0,0),(-1,0),  RL_NAVY),
             ("TEXTCOLOR",      (0,0),(-1,0),  colors.white),
@@ -957,9 +989,6 @@ def generate_rd_dashboard_pdf(
 # Real data from Company 2 Pty Ltd — FY25 R&D Plan (Mandibular Repositioning Device)
 # =============================================================================
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-
     SAMPLE = {
         # ── Section 1: Project Details ────────────────────────────────────────
         "project_title":       "Mandibular Repositioning Device [System for the identification, reporting, communication, and treatment of OSA]",
